@@ -127,6 +127,8 @@ const (
 
 	SetApiEndpointKey
 
+	SetPendingPriAddrs // chihua add
+
 	StoreEventsKey
 
 	_nInvokes // keep this last
