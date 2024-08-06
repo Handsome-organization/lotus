@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::convert::{TryFrom, TryInto};
+use std::ops::RangeInclusive;
 
 use anyhow::{anyhow, Context};
 use cid::Cid;
@@ -7,7 +8,8 @@ use fvm4::executor::ApplyKind;
 use fvm4::gas::GasCharge;
 use fvm4::trace::ExecutionEvent;
 use fvm4_shared::address::Address;
-use fvm4_shared::MethodNum;
+use fvm4_shared::state::ActorState;
+use fvm4_shared::{ActorID, MethodNum};
 use fvm_ipld_encoding::ipld_block::IpldBlock;
 use fvm_ipld_encoding::tuple::{Deserialize_tuple, Serialize_tuple};
 use fvm_ipld_encoding::{strict_bytes, to_vec, CborStore};
@@ -26,8 +28,54 @@ use super::types::*;
 use crate::destructor;
 use crate::util::types::{catch_panic_response, catch_panic_response_no_default, Result};
 
+const STACK_SIZE: usize = 64 << 20; // 64MiB
+
 lazy_static! {
-    static ref ENGINES: MultiEngineContainer = MultiEngineContainer::new_env();
+    static ref CONCURRENCY: u32 = get_concurrency();
+    static ref ENGINES: MultiEngineContainer = MultiEngineContainer::with_concurrency(*CONCURRENCY);
+    static ref THREAD_POOL: yastl::Pool = yastl::Pool::with_config(
+        *CONCURRENCY as usize,
+        yastl::ThreadConfig::new()
+            .prefix("fvm")
+            .stack_size(STACK_SIZE)
+    );
+}
+
+const LOTUS_FVM_CONCURRENCY_ENV_NAME: &str = "LOTUS_FVM_CONCURRENCY";
+const VALID_CONCURRENCY_RANGE: RangeInclusive<u32> = 1..=256;
+
+fn available_parallelism() -> u32 {
+    std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(8) as u32
+}
+
+fn get_concurrency() -> u32 {
+    let valosstr = match std::env::var_os(LOTUS_FVM_CONCURRENCY_ENV_NAME) {
+        Some(v) => v,
+        None => return available_parallelism(),
+    };
+    let valstr = match valosstr.to_str() {
+        Some(s) => s,
+        None => {
+            log::error!("{LOTUS_FVM_CONCURRENCY_ENV_NAME} has invalid value");
+            return available_parallelism();
+        }
+    };
+    let concurrency: u32 = match valstr.parse() {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("{LOTUS_FVM_CONCURRENCY_ENV_NAME} has invalid value: {e}");
+            return available_parallelism();
+        }
+    };
+    if !VALID_CONCURRENCY_RANGE.contains(&concurrency) {
+        log::error!(
+            "{LOTUS_FVM_CONCURRENCY_ENV_NAME} must be in the range {VALID_CONCURRENCY_RANGE:?}, not {concurrency}"
+        );
+        return available_parallelism();
+    }
+    concurrency
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -180,6 +228,23 @@ fn create_fvm_debug_machine(
     )
 }
 
+fn with_new_stack<F, T>(name: &str, pool: &yastl::Pool, callback: F) -> repr_c::Box<Result<T>>
+where
+    T: Sized + Default + Send,
+    F: FnOnce() -> anyhow::Result<T> + std::panic::UnwindSafe + Send,
+{
+    let mut res = None;
+    pool.scoped(|scope| scope.execute(|| res = Some(catch_panic_response(name, callback))));
+
+    res.unwrap_or_else(|| {
+        repr_c::Box::new(Result::err(
+            format!("failed to schedule {name}")
+                .into_bytes()
+                .into_boxed_slice(),
+        ))
+    })
+}
+
 #[ffi_export]
 fn fvm_machine_execute_message(
     executor: &'_ InnerFvmMachine,
@@ -187,7 +252,8 @@ fn fvm_machine_execute_message(
     chain_len: u64,
     apply_kind: u64, /* 0: Explicit, _: Implicit */
 ) -> repr_c::Box<Result<FvmMachineExecuteResponse>> {
-    catch_panic_response("fvm_machine_execute_message", || {
+    // Execute in the thread-pool because we need a 64MiB stack.
+    with_new_stack("fvm_machine_execute_message", &THREAD_POOL, || {
         let apply_kind = if apply_kind == 0 {
             ApplyKind::Explicit
         } else {
@@ -369,6 +435,7 @@ struct LotusGasCharge {
 struct Trace {
     pub msg: TraceMessage,
     pub msg_ret: TraceReturn,
+    pub msg_invoked: Option<TraceActor>,
     pub gas_charges: Vec<LotusGasCharge>,
     pub subcalls: Vec<Trace>,
 }
@@ -384,7 +451,12 @@ pub struct TraceMessage {
     pub codec: u64,
     pub gas_limit: u64,
     pub read_only: bool,
-    pub code_cid: Cid,
+}
+
+#[derive(Serialize_tuple, Deserialize_tuple, Debug, PartialEq, Eq, Clone)]
+pub struct TraceActor {
+    pub actor_id: ActorID,
+    pub actor_state: ActorState,
 }
 
 #[derive(Serialize_tuple, Deserialize_tuple, Debug, PartialEq, Eq, Clone)]
@@ -417,8 +489,8 @@ fn build_lotus_trace(
             codec: params.codec,
             gas_limit,
             read_only,
-            code_cid: Cid::default(),
         },
+        msg_invoked: None,
         msg_ret: TraceReturn {
             exit_code: ExitCode::OK,
             return_data: Vec::new(),
@@ -443,8 +515,11 @@ fn build_lotus_trace(
                     from, to, method, params, value, gas_limit, read_only, trace_iter,
                 )?);
             }
-            ExecutionEvent::InvokeActor(cid) => {
-                new_trace.msg.code_cid = cid;
+            ExecutionEvent::InvokeActor { id, state } => {
+                new_trace.msg_invoked = Some(TraceActor {
+                    actor_id: id,
+                    actor_state: state,
+                })
             }
             ExecutionEvent::CallReturn(exit_code, return_data) => {
                 let return_data = return_data.unwrap_or_default();

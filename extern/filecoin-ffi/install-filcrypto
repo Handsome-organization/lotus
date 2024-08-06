@@ -123,7 +123,7 @@ download_release_tarball() {
         -w "%{url_effective}" \
         "${__release_url}")
 
-    if ! curl --retry 3 --output "${__tar_path}" "${__asset_url}"; then
+    if ! curl "${auth_header[@]}" --retry 3 --output "${__tar_path}" "${__asset_url}"; then
         (>&2 echo "[download_release_tarball] failed to download release asset (tag URL: ${__release_tag_url}, asset URL: ${__asset_url})")
         return 1
     fi
@@ -158,39 +158,47 @@ build_from_source() {
 
     cargo --version
 
-    additional_flags=""
-    # For building on Darwin, we try to use cargo-lipo instead of cargo build.
-    # Note that the cross compile works on x86_64 for m1, but doesn't work on m1.
-    # For m1, we will build natively if building from source.
+    # In the past we were only able to build universal binaries on x86_64,
+    # for now we just keep that behaviour. This means that on aarch64 (e.g.
+    # Apple M1) it's a native, non-universal binary.
     if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "x86_64" ]; then
         # Rustup only installs the correct versions for the current
         # architecture you're on. As we cross-compile to aarch64, we need to
         # make sure that toolchain is installes as well.
         rustup target add aarch64-apple-darwin
         build="lipo"
-        additional_flags="--targets x86_64-apple-darwin,aarch64-apple-darwin "
     else
         build="build"
     fi
 
-    # Check if GPU support is disabled.
-    if [ "${FFI_USE_GPU}" == "0" ]; then
-        gpu_flags=""
-    elif [ "${FFI_USE_CUDA_SUPRASEAL}" == "1" ]; then
-        # If SupraSeal is enabled, just use the `cuda-supraseal` eature and
+    # Check for specified GPU support.
+    if [ "${FFI_USE_CUDA_SUPRASEAL}" == "1" ]; then
+        # If SupraSeal is enabled, just use the `cuda-supraseal` feature and
         # nothing else GPU related.
         gpu_flags=",cuda-supraseal"
-    else
-        # If GPUs are enabled and SupraSeal is not, default to CUDA support
-        # where possible.
-        # First ensure that nvcc (as part of the CUDA toolkit) is available --
-        # if it's not warn that we are defaulting GPU to OpenCL instead.
-        gpu_flags=",cuda"
 
-        # Unless OpenCL support is specified or we're building on Darwin.
-        if [ "${FFI_USE_OPENCL}" == "1" ] || [ "$(uname -s)" = "Darwin" ]; then
+        if [ ! "$(command -v nvcc)" ]; then
+            echo "WARNING: Cannot find nvcc for CUDA support."
+            echo "WARNING: For CUDA support, please ensure that the CUDA toolkit is properly installed."
+            echo "WARNING: After installation, nvcc must be in the system path."
+            echo ""
+            echo "WARNING: Defaulting to OpenCL GPU support(!!!)"
+            gpu_flags=",opencl"
+        fi
+    else
+        # Check if GPU usage is to be disabled.
+        if [ "${FFI_USE_GPU}" == "0" ]; then
+            gpu_flags=""
+        # Check if OpenCL support is specified or we're building on Darwin.
+        elif [ "${FFI_USE_OPENCL}" == "1" ] || [ "$(uname -s)" = "Darwin" ]; then
             gpu_flags=",opencl"
         else
+            # If GPUs are enabled and SupraSeal is not, default to CUDA support
+            # where possible.
+            # First ensure that nvcc (as part of the CUDA toolkit) is available --
+            # if it's not warn that we are defaulting GPU to OpenCL instead.
+            gpu_flags=",cuda"
+
             if [ ! "$(command -v nvcc)" ]; then
                 echo "WARNING: Cannot find nvcc for CUDA support."
                 echo "WARNING: For CUDA support, please ensure that the CUDA toolkit is properly installed."
@@ -208,11 +216,20 @@ build_from_source() {
         use_multicore_sdr=""
     fi
 
+    # By default the number or rows to discard of the TreeRLast can be set via
+    # `FIL_PROOFS_ROWS_TO_DISCARD`. When SupraSeal PC2 is used, then this
+    # number is fixed.
+    use_fixed_rows_to_discard=""
+    if [ "${FFI_USE_FIXED_ROWS_TO_DISCARD}" == "1" ]; then
+        use_fixed_rows_to_discard=",fixed-rows-to-discard"
+    fi
+
+    additional_flags=""
     # Add feature specific rust flags as needed here.
     if [ "${FFI_USE_BLST_PORTABLE}" == "1" ]; then
-        additional_flags="${additional_flags} --no-default-features --features ${use_multicore_sdr},blst-portable${gpu_flags}"
+        additional_flags="${additional_flags} --no-default-features --features ${use_multicore_sdr},blst-portable${gpu_flags}${use_fixed_rows_to_discard}"
     else
-        additional_flags="${additional_flags} --no-default-features --features ${use_multicore_sdr}${gpu_flags}"
+        additional_flags="${additional_flags} --no-default-features --features ${use_multicore_sdr}${gpu_flags}${use_fixed_rows_to_discard}"
     fi
 
     echo "Using additional build flags: ${additional_flags}"

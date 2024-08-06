@@ -294,6 +294,36 @@ fn seal_commit_phase2(
     })
 }
 
+/// This function generates a variant of the circuit proof for the second phase of the sealing
+/// process. It takes as input the output from the first phase of the sealing process
+/// [`seal_commit_phase1`] and a sector ID.
+///
+/// This variant of `seal_commit_phase2` is intended specifically for returning the circuit proofs
+/// of a NonInteractivePoRep proof, such that it can later be aggregated with other
+/// NonInteractivePoRep proofs.
+///
+/// # Arguments
+///
+/// * `seal_commit_phase1_output` - A reference to a slice of bytes representing the output from the
+///   first phase of the sealing process.
+/// * `sector_id` - A 64-bit integer representing the sector ID.
+///
+/// # Returns
+/// This function returns a `SealCommitPhase2Response` wrapped in a `repr_c::Box`. This response
+/// includes the proof generated in this phase of the sealing process.
+#[ffi_export]
+fn seal_commit_phase2_circuit_proofs(
+    seal_commit_phase1_output: c_slice::Ref<u8>,
+    sector_id: u64,
+) -> repr_c::Box<SealCommitPhase2Response> {
+    catch_panic_response("seal_commit_phase2_circuit_proofs", || {
+        let scp1o = serde_json::from_slice(&seal_commit_phase1_output)?;
+        let result = seal::seal_commit_phase2_circuit_proofs(scp1o, SectorId::from(sector_id))?;
+
+        Ok(result.proof.into_boxed_slice().into())
+    })
+}
+
 /// TODO: document
 #[ffi_export]
 fn generate_synth_proofs(
@@ -1210,16 +1240,6 @@ fn clear_synthetic_proofs(
     })
 }
 
-#[ffi_export]
-fn clear_layer_data(
-    sector_size: u64,
-    cache_dir_path: c_slice::Ref<u8>,
-) -> repr_c::Box<ClearCacheResponse> {
-    catch_panic_response("clear_layer_data", || {
-        seal::clear_layer_data(sector_size, &as_path_buf(&cache_dir_path)?)
-    })
-}
-
 /// Returns the number of user bytes that will fit into a staged sector.
 #[ffi_export]
 fn get_max_user_bytes_per_staged_sector(registered_proof: RegisteredSealProof) -> u64 {
@@ -1497,7 +1517,8 @@ pub mod tests {
     use std::path::Path;
     use std::str;
 
-    use anyhow::{ensure, Error, Result};
+    use anyhow::{anyhow, ensure, Error, Result};
+    use group::ff::PrimeField;
     use log::info;
     use memmap2::MmapOptions;
     use rand::{thread_rng, Rng};
@@ -1505,7 +1526,6 @@ pub mod tests {
     use crate::util::types::as_bytes;
 
     use super::*;
-    use fr32::bytes_into_fr;
 
     /// This is a test method for ensuring that the elements of 1 file matches the other.
     pub fn compare_elements(path1: &Path, path2: &Path) -> Result<(), Error> {
@@ -1520,8 +1540,10 @@ pub mod tests {
 
         for i in (0..end).step_by(fr_size) {
             let index = i as usize;
-            let fr1 = bytes_into_fr(&data1[index..index + fr_size])?;
-            let fr2 = bytes_into_fr(&data2[index..index + fr_size])?;
+            let fr1 = Fr::from_repr_vartime(data1[index..index + fr_size].try_into().unwrap())
+                .ok_or_else(|| anyhow!("Bytes could not be converted to Fr"))?;
+            let fr2 = Fr::from_repr_vartime(data2[index..index + fr_size].try_into().unwrap())
+                .ok_or_else(|| anyhow!("Bytes could not be converted to Fr"))?;
             ensure!(fr1 == fr2, "Data mismatch when comparing elements");
         }
         info!("Match found for {:?} and {:?}", path1, path2);
@@ -1573,7 +1595,7 @@ pub mod tests {
 
         // write the second
         {
-            let existing = vec![127u64];
+            let existing = [127u64];
 
             let resp = unsafe {
                 write_with_alignment(registered_proof, src_fd_b, 508, dst_fd, existing[..].into())
@@ -1678,10 +1700,11 @@ pub mod tests {
     #[test]
     #[allow(clippy::cognitive_complexity)]
     fn test_sealing_versions() -> Result<()> {
-        let versions = vec![
+        let versions = [
             RegisteredSealProof::StackedDrg2KiBV1,
             RegisteredSealProof::StackedDrg2KiBV1_1,
             RegisteredSealProof::StackedDrg2KiBV1_1_Feat_SyntheticPoRep,
+            RegisteredSealProof::StackedDrg2KiBV1_2_Feat_NonInteractivePoRep,
         ];
         for version in versions {
             info!("test_sealing_versions[{:?}]", version);
@@ -1753,7 +1776,7 @@ pub mod tests {
                 panic!("write_without_alignment failed: {:?}", msg);
             }
 
-            let existing_piece_sizes = vec![127];
+            let existing_piece_sizes = [127];
 
             let resp_a2 = unsafe {
                 write_with_alignment(
@@ -1770,7 +1793,7 @@ pub mod tests {
                 panic!("write_with_alignment failed: {:?}", msg);
             }
 
-            let pieces = vec![
+            let pieces = [
                 PublicPieceInfo {
                     num_bytes: 127,
                     comm_p: resp_a1.comm_p,
@@ -1846,7 +1869,7 @@ pub mod tests {
 
                 destroy_generate_synth_proofs_response(resp_p1);
 
-                let resp_clear = clear_layer_data(
+                let resp_clear = clear_cache(
                     api::RegisteredSealProof::from(registered_proof_seal)
                         .sector_size()
                         .0,
@@ -1854,7 +1877,7 @@ pub mod tests {
                 );
                 if resp_clear.status_code != FCPResponseStatus::NoError {
                     let msg = str::from_utf8(&resp_clear.error_msg).unwrap();
-                    panic!("clear_layer_data failed: {:?}", msg);
+                    panic!("clear_cache failed: {:?}", msg);
                 }
                 destroy_clear_cache_response(resp_clear);
             }
@@ -1995,7 +2018,7 @@ pub mod tests {
                 panic!("write_without_alignment failed: {:?}", msg);
             }
 
-            let existing_piece_sizes = vec![127];
+            let existing_piece_sizes = [127];
 
             let resp_new_a2 = unsafe {
                 write_with_alignment(
@@ -2307,7 +2330,7 @@ pub mod tests {
 
             // generate a PoSt
 
-            let sectors = vec![sector_id];
+            let sectors = [sector_id];
             let resp_f = generate_winning_post_sector_challenge(
                 registered_proof_winning_post,
                 &randomness,
@@ -2561,7 +2584,7 @@ pub mod tests {
             //
             //////////////////////////////////////////////
 
-            let sectors = vec![sector_id, sector_id2];
+            let sectors = [sector_id, sector_id2];
             let private_replicas = vec![
                 PrivateReplicaInfo {
                     registered_proof: registered_proof_window_post,
@@ -2869,7 +2892,7 @@ pub mod tests {
                 panic!("write_without_alignment failed: {:?}", msg);
             }
 
-            let existing_piece_sizes = vec![127];
+            let existing_piece_sizes = [127];
 
             let resp_a2 = unsafe {
                 write_with_alignment(
@@ -3058,7 +3081,7 @@ pub mod tests {
                 panic!("write_without_alignment failed: {:?}", msg);
             }
 
-            let existing_piece_sizes = vec![127];
+            let existing_piece_sizes = [127];
 
             let resp_a2 = unsafe {
                 write_with_alignment(
@@ -3197,10 +3220,10 @@ pub mod tests {
 
             assert!(**resp_d2, "proof was not valid");
 
-            let seal_commit_responses = vec![resp_c2.value.clone(), resp_c22.value.clone()];
+            let seal_commit_responses = [resp_c2.value.clone(), resp_c22.value.clone()];
 
-            let comm_rs = vec![resp_b2.comm_r, resp_b2.comm_r];
-            let seeds = vec![seed, seed];
+            let comm_rs = [resp_b2.comm_r, resp_b2.comm_r];
+            let seeds = [seed, seed];
             let resp_aggregate_proof = aggregate_seal_proofs(
                 registered_proof_seal,
                 registered_aggregation,
