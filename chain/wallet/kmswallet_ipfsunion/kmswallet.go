@@ -14,6 +14,7 @@ import (
 
 	logging "github.com/ipfs/go-log"
 
+	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/crypto"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/chain/types"
