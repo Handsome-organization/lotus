@@ -1,6 +1,7 @@
 package types
 
 import (
+	"github.com/filecoin-project/go-address"
 	"time"
 )
 
