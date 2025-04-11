@@ -17,7 +17,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/net/conngater"
-	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
 
@@ -132,6 +131,8 @@ const (
 	ConsensusReporterKey
 
 	SetApiEndpointKey
+
+	SetPendingPriAddrs // chihua add
 
 	StoreEventsKey
 

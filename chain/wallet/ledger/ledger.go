@@ -5,15 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/query"
 	logging "github.com/ipfs/go-log/v2"
 	ledgerfil "github.com/zondax/ledger-filecoin-go"
 	"golang.org/x/xerrors"
+	"os"
+	"strings"
 
-	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/crypto"
 
 	"github.com/filecoin-project/lotus/api"
@@ -48,12 +46,13 @@ func (lw LedgerWallet) WalletSign(ctx context.Context, signer address.Address, t
 	if err != nil {
 		return nil, err
 	}
-	defer fl.Close() // nolint:errcheck
-	if meta.Type != api.MTChainMsg {
+	defer fl.Close()                                               // nolint:errcheck
+	if meta.Type != api.MTChainMsg && meta.Type != api.MTUnknown { //chihua add
 		return nil, fmt.Errorf("ledger can only sign chain messages")
 	}
 
-	{
+	isMsg := false
+	if meta.Type == api.MTChainMsg { //chihua add{
 		var cmsg types.Message
 		if err := cmsg.UnmarshalCBOR(bytes.NewReader(meta.Extra)); err != nil {
 			return nil, xerrors.Errorf("unmarshalling message: %w", err)
@@ -67,9 +66,10 @@ func (lw LedgerWallet) WalletSign(ctx context.Context, signer address.Address, t
 		if !cmsg.Cid().Equals(bc) {
 			return nil, xerrors.Errorf("cid(meta.Extra).bytes() != toSign")
 		}
+		isMsg = true //chihua add
 	}
 
-	sig, err := fl.SignSECP256K1(ki.Path, meta.Extra)
+	sig, err := fl.SignSECP256K1(ki.Path, meta.Extra, isMsg)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,16 @@ func (lw LedgerWallet) WalletSign(ctx context.Context, signer address.Address, t
 func (lw LedgerWallet) getKeyInfo(ctx context.Context, addr address.Address) (*LedgerKeyInfo, error) {
 	kib, err := lw.ds.Get(ctx, keyForAddr(addr))
 	if err != nil {
-		return nil, err
+		/*chihua begin*/
+		if os.Getenv("LOTUS_USE_MAINNET_ADDRESSES_FORCE") == "1" {
+			kib, err = lw.ds.Get(ctx, keyForTestnetAddr(addr))
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+		/*chihua end*/
 	}
 
 	var out LedgerKeyInfo
@@ -108,6 +117,14 @@ func (lw LedgerWallet) WalletHas(ctx context.Context, k address.Address) (bool, 
 		return true, nil
 	}
 	if err == datastore.ErrNotFound {
+		/*chihua begin*/
+		if os.Getenv("LOTUS_USE_MAINNET_ADDRESSES_FORCE") == "1" {
+			_, err := lw.ds.Get(ctx, keyForTestnetAddr(k))
+			if err == nil {
+				return true, nil
+			}
+		}
+		/*chihua begin*/
 		return false, nil
 	}
 	return false, err
@@ -153,6 +170,8 @@ func (lw LedgerWallet) WalletList(ctx context.Context) ([]address.Address, error
 		if !ok {
 			break
 		}
+
+		fmt.Printf("LedgerWallet key=%s\n", res.Key)
 
 		var ki LedgerKeyInfo
 		if err := json.Unmarshal(res.Value, &ki); err != nil {
@@ -240,3 +259,11 @@ var dsLedgerPrefix = "/ledgerkey/"
 func keyForAddr(addr address.Address) datastore.Key {
 	return datastore.NewKey(dsLedgerPrefix + addr.String())
 }
+
+/*chihua begin*/
+func keyForTestnetAddr(addr address.Address) datastore.Key {
+	subAddr := strings.TrimPrefix(addr.String(), "f")
+	return datastore.NewKey(dsLedgerPrefix + address.TestnetPrefix + subAddr)
+}
+
+/*chihua end*/

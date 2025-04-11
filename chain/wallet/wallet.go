@@ -10,7 +10,6 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/crypto"
 
 	"github.com/filecoin-project/lotus/api"
@@ -135,6 +134,13 @@ func (w *LocalWallet) tryFind(addr address.Address) (types.KeyInfo, error) {
 
 	return ki, nil
 }
+
+/*chihua begin*/
+func (w *LocalWallet) getKeyForDef(addr address.Address) (types.KeyInfo, error) {
+	return w.keystore.Get(KNamePrefix + addr.String())
+}
+
+/*chihua end*/
 
 func (w *LocalWallet) WalletExport(ctx context.Context, addr address.Address) (*types.KeyInfo, error) {
 	k, err := w.findKey(addr)
