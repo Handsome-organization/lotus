@@ -2,15 +2,19 @@ package wallet
 
 import (
 	"context"
-	"fmt"
-	"github.com/filecoin-project/lotus/chain/wallet/key"
-	"sync"
+	kmswallet "github.com/filecoin-project/lotus/chain/wallet/kmswallet_ipfsunion"
 
+	"go.uber.org/fx"
+	"go.uber.org/multierr"
 	"golang.org/x/xerrors"
 
 	"github.com/filecoin-project/go-address"
+	"github.com/filecoin-project/go-state-types/crypto"
+
+	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/chain/types"
-	"github.com/filecoin-project/lotus/chain/wallet/kmswallet_ipfsunion"
+	ledgerwallet "github.com/filecoin-project/lotus/chain/wallet/ledger"
+	"github.com/filecoin-project/lotus/chain/wallet/remotewallet"
 )
 
 type MultiWallet struct {
