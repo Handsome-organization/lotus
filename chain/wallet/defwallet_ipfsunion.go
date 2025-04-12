@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/filecoin-project/lotus/chain/wallet/key"
-	kmswallet "github.com/filecoin-project/lotus/chain/wallet/kmswallet_ipfsunion"
 	"sync"
 
 	"golang.org/x/xerrors"
 
+	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/lotus/chain/types"
+	"github.com/filecoin-project/lotus/chain/wallet/kmswallet_ipfsunion"
 )
 
 type DefWallet struct {
