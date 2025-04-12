@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"sync"
