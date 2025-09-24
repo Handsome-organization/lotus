@@ -55,7 +55,7 @@ func (lw LedgerWallet) WalletSign(ctx context.Context, signer address.Address, t
 		return nil, fmt.Errorf("ledger can only sign chain messages or unknown message")	
 	}
 
-	isMsg := uint64(0)
+	isMsg := ledgerfil.SECP256K1
 	if meta.Type == api.MTChainMsg { //chihua add
 		var cmsg types.Message
 		if err := cmsg.UnmarshalCBOR(bytes.NewReader(meta.Extra)); err != nil {
@@ -70,7 +70,7 @@ func (lw LedgerWallet) WalletSign(ctx context.Context, signer address.Address, t
 		if !cmsg.Cid().Equals(bc) {
 			return nil, xerrors.Errorf("cid(meta.Extra).bytes() != toSign")
 		}
-		isMsg = 1 //chihua add
+		isMsg = ledgerfil.BLS //chihua add
 	}
 
 
