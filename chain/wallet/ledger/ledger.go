@@ -55,7 +55,7 @@ func (lw LedgerWallet) WalletSign(ctx context.Context, signer address.Address, t
 		return nil, fmt.Errorf("ledger can only sign chain messages or unknown message")	
 	}
 
-	isMsg := 0
+	isMsg := uint64(0)
 	if meta.Type == api.MTChainMsg { //chihua add
 		var cmsg types.Message
 		if err := cmsg.UnmarshalCBOR(bytes.NewReader(meta.Extra)); err != nil {
