@@ -74,7 +74,7 @@ func (lw LedgerWallet) WalletSign(ctx context.Context, signer address.Address, t
 	}
 
 
-	sig, err := fl.Sign(ki.Path, meta.Extra, ledgerfil.SECP256K1,isMsg)
+	sig, err := fl.SignSECP256K1(ki.Path, meta.Extra, ledgerfil.SECP256K1,isMsg)
 	if err != nil {
 		return nil, err
 	}
