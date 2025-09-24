@@ -133,6 +133,8 @@ const (
 
 	SetApiEndpointKey
 
+	SetPendingPriAddrs // chihua add
+
 	StoreEventsKey
 
 	InitChainIndexerKey
