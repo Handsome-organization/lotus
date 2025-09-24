@@ -246,7 +246,7 @@ func (ledger *LedgerFilecoin) GetBip44bytes(bip44Path []uint32, hardenCount int)
 	return pathBytes, nil
 }
 
-func (ledger *LedgerFilecoin) sign(bip44Path []uint32, transaction []byte,, curve CryptoCurve, isMsg bool) ([]byte, error) {//ipfsunion add
+func (ledger *LedgerFilecoin) sign(bip44Path []uint32, transaction []byte,curve CryptoCurve, isMsg bool) ([]byte, error) {//ipfsunion add
 	if err := isCryptoCurveSupported(curve); err != nil {
 		return nil, err
 	}
