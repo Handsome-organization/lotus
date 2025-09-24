@@ -195,6 +195,29 @@ func (ledger *LedgerFilecoin) SignSECP256K1(bip44Path []uint32, transaction []by
 	return &signatureAnswer, nil
 }
 
+func (ledger *LedgerFilecoin) Sign(bip44Path []uint32, transaction []byte, curve CryptoCurve, isMsg bool) (*SignatureAnswer, error) {
+	signatureBytes, err := ledger.sign(bip44Path, transaction, curve,isMsg)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseSignatureResponse(signatureBytes)
+}
+
+
+func parseSignatureResponse(signatureBytes []byte) (*SignatureAnswer, error) {
+	if len(signatureBytes) < signatureMinLength {
+		return nil, fmt.Errorf("signature too short: expected at least %d bytes, got %d", signatureMinLength, len(signatureBytes))
+	}
+
+	return &SignatureAnswer{
+		r:            signatureBytes[signatureROffset : signatureROffset+signatureRLength],
+		s:            signatureBytes[signatureSOffset : signatureSOffset+signatureSLength],
+		v:            signatureBytes[signatureVOffset],
+		derSignature: signatureBytes[signatureDEROffset:],
+	}, nil
+}
+
 // GetPublicKeySECP256K1 retrieves the public key for the corresponding bip44 derivation path
 // this command DOES NOT require user confirmation in the device
 func (ledger *LedgerFilecoin) GetPublicKeySECP256K1(bip44Path []uint32) ([]byte, error) {
@@ -223,7 +246,10 @@ func (ledger *LedgerFilecoin) GetBip44bytes(bip44Path []uint32, hardenCount int)
 	return pathBytes, nil
 }
 
-func (ledger *LedgerFilecoin) sign(bip44Path []uint32, transaction []byte, isMsg bool) ([]byte, error) {//ipfsunion add
+func (ledger *LedgerFilecoin) sign(bip44Path []uint32, transaction []byte,, curve CryptoCurve, isMsg bool) ([]byte, error) {//ipfsunion add
+	if err := isCryptoCurveSupported(curve); err != nil {
+		return nil, err
+	}
 
 	pathBytes, err := ledger.GetBip44bytes(bip44Path, HardenCount)
 	if err != nil {
