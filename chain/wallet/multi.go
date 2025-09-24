@@ -21,9 +21,6 @@ import (
 type MultiWallet struct {
 	fx.In // "constructed" with fx.In instead of normal constructor
 
-	Local  *LocalWallet               `optional:"true"`
-	Remote *remotewallet.RemoteWallet `optional:"true"`
-	Ledger *ledgerwallet.LedgerWallet `optional:"true"`
 	Local     *LocalWallet               `optional:"true"`
 	Remote    *remotewallet.RemoteWallet `optional:"true"`
 	Ledger    *ledgerwallet.LedgerWallet `optional:"true"`
